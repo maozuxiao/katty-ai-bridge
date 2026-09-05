@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Katty AI Bridge — 设置</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body>
+<div class="wrap">
+
+  <div class="masthead">
+    <div class="mark">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 2.5l1.9 5.1a3 3 0 0 0 1.8 1.8l5.1 1.9-5.1 1.9a3 3 0 0 0-1.8 1.8L12 20.1l-1.9-5.1a3 3 0 0 0-1.8-1.8L3.2 11.3l5.1-1.9a3 3 0 0 0 1.8-1.8z" fill="#fff"/>
+        <path d="M18.6 2.2l.7 1.9a1.1 1.1 0 0 0 .6.6l1.9.7-1.9.7a1.1 1.1 0 0 0-.6.6l-.7 1.9-.7-1.9a1.1 1.1 0 0 0-.6-.6l-1.9-.7 1.9-.7a1.1 1.1 0 0 0 .6-.6z" fill="#fff" opacity=".75"/>
+      </svg>
+    </div>
+    <div>
+      <h1>Katty AI Bridge</h1>
+      <p class="sub">为静态网页提供统一的 AI 请求通道 · v<span id="version">—</span></p>
+    </div>
+  </div>
+
+  <!-- ==================== 供应商 ==================== -->
+  <section class="card">
+    <h2>供应商<span class="tag" id="permTag"></span></h2>
+    <div class="body">
+
+      <div class="field">
+        <label for="providerSelect">选择供应商</label>
+        <select id="providerSelect"></select>
+        <div class="hint" id="providerHint"></div>
+      </div>
+
+      <div class="field" id="customNameField" hidden>
+        <label for="customName">显示名称</label>
+        <input type="text" id="customName" placeholder="例如：公司内网网关">
+      </div>
+
+      <div class="field">
+        <label for="baseUrl">API 地址（baseURL）</label>
+        <input type="text" id="baseUrl" spellcheck="false">
+      </div>
+
+      <div class="field">
+        <label for="apiKey">API Key</label>
+        <div class="row">
+          <input type="password" id="apiKey" placeholder="sk-..." spellcheck="false">
+          <button class="btn ghost" id="toggleKey" style="flex:0 0 auto" type="button">显示</button>
+        </div>
+        <div class="hint">Key 仅保存在本机扩展存储中，永不回传给调用它的网页。</div>
+      </div>
+
+      <div class="field">
+        <label for="model">模型</label>
+        <input type="text" id="model" spellcheck="false">
+        <div class="row" style="margin-top:8px">
+          <select id="modelPreset"></select>
+          <button class="btn" id="fetchModels" type="button" style="flex:0 0 auto">获取列表</button>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn primary" id="save" type="button">保存配置</button>
+        <button class="btn" id="grant" type="button">授权跨域</button>
+        <button class="btn" id="test" type="button">测试连接</button>
+        <span id="providerStatus"></span>
+      </div>
+
+      <div class="status" id="status"></div>
+    </div>
+  </section>
+
+  <!-- ==================== 白名单 ==================== -->
+  <section class="card">
+    <h2>站点白名单</h2>
+    <div class="body">
+      <div class="note">
+        只有白名单中的页面可以调用本扩展。<strong>页面是公开的，任何第三方网页都可能尝试调用</strong>，因此默认拒绝未知来源。
+      </div>
+      <div style="height:12px"></div>
+      <div class="list" id="allowList"></div>
+      <div class="row" style="margin-top:12px">
+        <input type="text" id="newOrigin" placeholder="https://example.com、https://example.com/* 或 http://localhost:*" spellcheck="false">
+        <button class="btn" id="addOrigin" type="button" style="flex:0 0 auto">添加</button>
+      </div>
+    </div>
+    <div class="body" id="pendingBody" hidden>
+      <label style="display:block;font-size:12px;font-weight:500;color:var(--muted);margin-bottom:8px">
+        待处理的请求来源
+      </label>
+      <div class="list" id="pendingList"></div>
+    </div>
+  </section>
+
+  <!-- ==================== 用量 ==================== -->
+  <section class="card">
+    <h2>累计用量<span class="tag">自安装起</span></h2>
+    <div class="body">
+      <div class="stats">
+        <div class="stat"><div class="num" id="stReq">0</div><div class="cap">请求次数</div></div>
+        <div class="stat"><div class="num" id="stIn">0</div><div class="cap">输入 tokens</div></div>
+        <div class="stat"><div class="num" id="stOut">0</div><div class="cap">输出 tokens</div></div>
+      </div>
+      <div class="actions">
+        <button class="btn ghost danger" id="resetStats" type="button">清零统计</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 说明 ==================== -->
+  <section class="card">
+    <h2>使用说明</h2>
+    <div class="body">
+      <div class="note">
+        <strong>为什么需要扩展。</strong>OpenAI、DeepSeek、智谱、Moonshot 等都没有开放 CORS，浏览器里的网页无法直接调用。扩展的 Service Worker 源是 <code>chrome-extension://</code>，不受该限制。
+      </div>
+      <div class="note">
+        <strong>未装扩展时。</strong>页面会退化为直连。OpenRouter 等开放了 CORS 的供应商仍可用；其余会报跨域错误。直连所需的 Key 由页面自行保管（存浏览器 localStorage）。
+      </div>
+      <div class="note warn">
+        <strong>本地打开 HTML 文件（file://）。</strong>Chrome 默认禁止扩展向 <code>file://</code> 页面注入脚本。如需在本地调试，请到 <code>chrome://extensions</code> 找到本扩展，进入「详细信息」，打开<strong>「允许访问文件网址」</strong>，然后把 <code>file://</code> 加入上方白名单。
+      </div>
+      <div class="note">
+        <strong>更换供应商后</strong>请回到页面刷新一次，让页面重新读取扩展配置。
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script type="module" src="options.js"></script>
+</body>
+</html>

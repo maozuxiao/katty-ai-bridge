@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Katty AI Bridge</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body>
+<div class="popup-wrap">
+
+  <div class="masthead" style="margin-bottom:16px">
+    <div class="mark" style="width:30px;height:30px;border-radius:8px">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 2.5l1.9 5.1a3 3 0 0 0 1.8 1.8l5.1 1.9-5.1 1.9a3 3 0 0 0-1.8 1.8L12 20.1l-1.9-5.1a3 3 0 0 0-1.8-1.8L3.2 11.3l5.1-1.9a3 3 0 0 0 1.8-1.8z" fill="#fff"/>
+        <path d="M18.6 2.2l.7 1.9a1.1 1.1 0 0 0 .6.6l1.9.7-1.9.7a1.1 1.1 0 0 0-.6.6l-.7 1.9-.7-1.9a1.1 1.1 0 0 0-.6-.6l-1.9-.7 1.9-.7a1.1 1.1 0 0 0 .6-.6z" fill="#fff" opacity=".75"/>
+      </svg>
+    </div>
+    <div>
+      <h1 style="font-size:14px">Katty AI Bridge</h1>
+      <p class="sub" style="font-size:11px">AI 请求通道 · v<span id="version">—</span></p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:12px">
+    <div class="body" style="padding:12px 14px">
+      <div class="popup-row">
+        <span class="k">供应商</span><span class="v" id="pProvider">—</span>
+      </div>
+      <div class="popup-row">
+        <span class="k">模型</span><span class="v" id="pModel">—</span>
+      </div>
+      <div class="popup-row">
+        <span class="k">Key</span><span class="v" id="pKey">—</span>
+      </div>
+      <div class="popup-row">
+        <span class="k">累计请求</span><span class="v" id="pReq">0</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <button class="btn primary" id="openOptions" type="button">打开完整设置</button>
+    <button class="btn" id="copySdk" type="button">复制页面接入 SDK</button>
+  </div>
+
+  <div class="status" id="pStatus" style="margin-top:10px"></div>
+
+</div>
+<script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Katty AI Bridge",
+  "version": "1.0.0",
+  "description": "为本地静态网页提供统一的 AI 请求通道：绕过浏览器 CORS 限制，并在扩展内安全保管 API Key。",
+  "minimum_chrome_version": "109",
+  "permissions": ["storage"],
+  "optional_host_permissions": ["http://*/", "https://*/"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Katty AI Bridge",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>", "file:///*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}
