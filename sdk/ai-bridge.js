@@ -147,6 +147,9 @@
     return new Promise(function (resolve, reject) {
       var id = uuid()
       var settled = false
+      // 扩展发来的 delta.text 是「增量片段」而非累积文本，
+      // 这里自己累积，才能给 onDelta 提供与直连通道语义一致的 (chunk, full)。
+      var acc = ''
 
       function finish(err, text) {
         if (settled) return
@@ -169,9 +172,12 @@
         if (!d || d.source !== MSG_FROM_EXT || d.id !== id) return
         var pl = d.payload || {}
         if (d.type === 'delta') {
-          if (opts.onDelta) opts.onDelta(pl.text || '', (pl.text || ''))
+          var piece = pl.text || ''
+          acc += piece
+          if (opts.onDelta) opts.onDelta(piece, acc)
         } else if (d.type === 'done') {
-          finish(null, pl.text != null ? pl.text : '')
+          // done 的 text 是完整内容；万一扩展侧缺失则回落到本地累积值
+          finish(null, pl.text != null && pl.text !== '' ? pl.text : acc)
         } else if (d.type === 'error') {
           finish(makeError(pl.code || 'UNKNOWN', pl.message || '请求失败'), null)
         }
