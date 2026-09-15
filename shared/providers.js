@@ -196,6 +196,42 @@ export function inferRequiresKey(baseUrl) {
 }
 
 /**
+ * 供应商「实际」是否需要 API Key —— 运行时唯一判定入口。
+ *
+ * 优先级：用户显式拨过的开关 > 内置预设 > 按地址自动推断。
+ *
+ * ⚠ provider.requiresKey 单独不可信：1.0.1 及以前保存自定义端点时无条件写成 true，
+ *   那是代码写死的、并非用户的选择。因此只有带 requiresKeyExplicit 标记的值才被采信。
+ */
+export function effectiveRequiresKey(provider, preset) {
+  if (provider && provider.requiresKeyExplicit) return provider.requiresKey !== false
+  if (preset && typeof preset.requiresKey === 'boolean') return preset.requiresKey
+  return inferRequiresKey(provider && provider.baseUrl)
+}
+
+/**
+ * 迁移旧存档：把 1.0.1 及以前写死的 requiresKey 按新规则重算一次并落盘。
+ *
+ * content script 与 popup 读的是存储里的原始值，自己不跑判定逻辑（content script
+ * 无法加载 ES module），所以必须把数据修正一次，它们显示的状态才不会再误导。
+ * 值未变化时不写盘，可安全重复调用。
+ */
+export async function migrateProviderRequiresKey() {
+  const got = await chrome.storage.local.get(['providers'])
+  const providers = got.providers || {}
+  let changed = false
+  for (const p of Object.values(providers)) {
+    const next = effectiveRequiresKey(p, findPreset(p.id))
+    if (p.requiresKey !== next) {
+      p.requiresKey = next
+      changed = true
+    }
+  }
+  if (changed) await chrome.storage.local.set({ providers })
+  return changed
+}
+
+/**
  * OpenCode（Go / Zen）要求每会话带稳定的 x-opencode-session 头。
  * 移植自 mc-tool chatService.ts 的 opencodeSessionHeaders。
  *

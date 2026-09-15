@@ -17,6 +17,9 @@ import {
   getOpencodeSessionId,
   newOpencodeSessionId,
   providerErrorMessage,
+  effectiveRequiresKey,
+  migrateProviderRequiresKey,
+  findPreset,
   matchOrigin
 } from './shared/providers.js'
 import { readSseStream } from './shared/sse.js'
@@ -109,9 +112,10 @@ async function handleChat(port, msg) {
       })
       return
     }
-    // requiresKey 由选项页写入：内置预设取 PROVIDER_PRESETS，自定义端点先按地址
-    // 自动推断（本地/内网网关免 Key）再允许手动覆盖。空 Key 只有在确实需要时才算错误。
-    if (provider.requiresKey !== false && !provider.apiKey) {
+    // 是否需要 Key 以 effectiveRequiresKey 为准（显式开关 > 预设 > 地址推断），
+    // 不直接读 provider.requiresKey：旧存档里自定义端点那一栏是写死的 true。
+    // 这样一来，本地/内网网关即使还没重新保存过配置也能正常发请求。
+    if (effectiveRequiresKey(provider, findPreset(provider.id)) && !provider.apiKey) {
       post({ type: 'error', code: 'NO_KEY', message: `供应商「${provider.name}」未填写 API Key。` })
       return
     }
@@ -229,3 +233,10 @@ chrome.runtime.onInstalled.addListener(async () => {
   if (!got.allowlist) patch.allowlist = DEFAULT_ALLOWLIST.slice()
   if (Object.keys(patch).length) await chrome.storage.local.set(patch)
 })
+
+// 把旧版本给自定义端点写死的 requiresKey 按新规则重算一次。
+//
+// 放在顶层而不是只在 onInstalled 里：未打包扩展点「重新加载」时 onInstalled 不保证触发，
+// 而顶层代码在 Service Worker 每次启动时都会执行，足以覆盖「用户装完新版本就直接去看页面」
+// 的场景。迁移是幂等的（值没变就不写盘），重复执行无副作用。
+migrateProviderRequiresKey().catch(() => {})

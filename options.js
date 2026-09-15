@@ -9,6 +9,8 @@ import {
   findPreset,
   originPatternFor,
   inferRequiresKey,
+  effectiveRequiresKey,
+  migrateProviderRequiresKey,
   opencodeSessionHeader,
   getOpencodeSessionId,
   providerErrorMessage,
@@ -102,14 +104,10 @@ function fillProviderForm(id, store) {
     )}`
   }
 
-  // 取值优先级：已保存值 > 预设值 > 按地址自动推断（本地/内网网关免 Key）
+  // 取值优先级：用户显式拨过的开关 > 预设值 > 按地址自动推断（本地/内网网关免 Key）。
+  // 注意不能直接信 saved.requiresKey——1.0.1 及以前给自定义端点写死的 true 并非用户选择。
   keyRequiredTouched = false
-  const requiresKey = saved && typeof saved.requiresKey === 'boolean'
-    ? saved.requiresKey
-    : (preset && typeof preset.requiresKey === 'boolean'
-      ? preset.requiresKey
-      : inferRequiresKey($('baseUrl').value))
-  $('keyRequired').checked = requiresKey
+  $('keyRequired').checked = effectiveRequiresKey(saved || { baseUrl: $('baseUrl').value, custom: isCustom }, preset)
   // 内置预设的鉴权方式是已知事实，不给改；只有自定义端点允许覆盖
   $('keyRequired').disabled = !isCustom
   syncKeyField()
@@ -173,7 +171,10 @@ async function saveProvider() {
     apiKey: $('apiKey').value.trim(),
     defaultModel: $('model').value.trim(),
     models: Array.from($('modelPreset').options).map(o => o.value).filter(Boolean),
-    requiresKey: preset ? preset.requiresKey !== false : $('keyRequired').checked,
+    requiresKey: $('keyRequired').checked,
+    // 只有用户亲手拨过开关才落这个标记；否则下次打开仍按地址重新推断，
+    // 这样以后调整推断规则时，未被显式覆盖的条目能自动跟着更新
+    requiresKeyExplicit: keyRequiredTouched || !!existing.requiresKeyExplicit,
     unsupported: preset?.unsupported || false,
     custom: id.startsWith('custom:')
   })
@@ -425,6 +426,9 @@ function renderStats(store) {
 
 async function init() {
   $('version').textContent = chrome.runtime.getManifest().version
+  // 先修正旧版本给自定义端点写死的 requiresKey：content script 与 popup 只读存储，
+  // 不跑判定逻辑，数据不改它们的状态就一直是错的
+  await migrateProviderRequiresKey()
   const store = await getStore()
   await rebuildProviderSelect()
   renderAllowlist(store)
