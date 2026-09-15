@@ -4,12 +4,23 @@
  * 以 ES module 加载，可直接 import shared/providers.js，避免预设清单在两处各存一份。
  */
 
-import { PROVIDER_PRESETS, findPreset, originPatternFor, matchOrigin } from './shared/providers.js'
+import {
+  PROVIDER_PRESETS,
+  findPreset,
+  originPatternFor,
+  inferRequiresKey,
+  opencodeSessionHeader,
+  getOpencodeSessionId,
+  providerErrorMessage,
+  matchOrigin
+} from './shared/providers.js'
 
 const $ = (id) => document.getElementById(id)
 const CUSTOM_ID = '__custom__'
 
 let currentId = null
+/** 用户手动拨过「需要 API Key」开关后，改地址时不再用推断值覆盖它 */
+let keyRequiredTouched = false
 
 // ---------------------------------------------------------------- 工具
 
@@ -40,9 +51,27 @@ async function getStore() {
 
 // ---------------------------------------------------------------- 供应商表单
 
+/**
+ * 自定义供应商有两种形态：
+ *   '__custom__'        下拉框里「＋ 自定义端点…」，尚未保存
+ *   'custom:<baseUrl>'  已保存的自定义条目（saveProvider 生成的 ID）
+ * 两者都要走自定义分支，否则切换到一个已保存的自定义条目时
+ * 两个回填分支都不命中，表单会残留上一个供应商的 API Key（甚至被保存覆盖）。
+ */
+function isCustomId(id) {
+  return id === CUSTOM_ID || String(id).indexOf('custom:') === 0
+}
+
+/** 免 Key 端点禁用并清空 Key 输入框（与内置预设 ollama 的原有表现一致） */
+function syncKeyField() {
+  const required = $('keyRequired').checked
+  $('apiKey').disabled = !required
+  if (!required) $('apiKey').value = ''
+}
+
 function fillProviderForm(id, store) {
   currentId = id
-  const isCustom = id === CUSTOM_ID
+  const isCustom = isCustomId(id)
   const preset = findPreset(id)
   const saved = store.providers[id]
 
@@ -50,7 +79,8 @@ function fillProviderForm(id, store) {
   $('baseUrl').readOnly = !isCustom
 
   if (isCustom) {
-    $('customName').value = saved?.name || ''
+    // 保存时 name 为空会回落到 baseUrl，这里还原成空，避免用户以为真填了这个名字
+    $('customName').value = saved?.name && saved.name !== saved.baseUrl ? saved.name : ''
     $('baseUrl').value = saved?.baseUrl || 'https://'
     $('apiKey').value = saved?.apiKey || ''
     $('model').value = saved?.defaultModel || ''
@@ -72,8 +102,20 @@ function fillProviderForm(id, store) {
     )}`
   }
 
-  $('apiKey').disabled = !!preset && preset.requiresKey === false
-  if ($('apiKey').disabled) $('apiKey').value = ''
+  // 取值优先级：已保存值 > 预设值 > 按地址自动推断（本地/内网网关免 Key）
+  keyRequiredTouched = false
+  const requiresKey = saved && typeof saved.requiresKey === 'boolean'
+    ? saved.requiresKey
+    : (preset && typeof preset.requiresKey === 'boolean'
+      ? preset.requiresKey
+      : inferRequiresKey($('baseUrl').value))
+  $('keyRequired').checked = requiresKey
+  // 内置预设的鉴权方式是已知事实，不给改；只有自定义端点允许覆盖
+  $('keyRequired').disabled = !isCustom
+  syncKeyField()
+
+  // 只有已保存的自定义条目可删除；内置预设与未保存的新建项不给删除入口
+  $('deleteProvider').hidden = !(String(id).indexOf('custom:') === 0 && !!saved)
 
   refreshPermTag()
 }
@@ -114,7 +156,10 @@ async function saveProvider() {
   if (!baseUrl) return showStatus('err', '请填写 API 地址。')
 
   let id = currentId
-  if (id === CUSTOM_ID) {
+  if (isCustomId(id)) {
+    // 自定义条目的 ID 由 baseUrl 决定，改了地址就是另一个条目：
+    // 这里删掉旧条目，避免留下孤儿存档继续占用下拉框
+    if (id !== CUSTOM_ID && id !== 'custom:' + baseUrl) delete store.providers[id]
     id = 'custom:' + baseUrl
   }
 
@@ -128,7 +173,7 @@ async function saveProvider() {
     apiKey: $('apiKey').value.trim(),
     defaultModel: $('model').value.trim(),
     models: Array.from($('modelPreset').options).map(o => o.value).filter(Boolean),
-    requiresKey: preset ? preset.requiresKey !== false : true,
+    requiresKey: preset ? preset.requiresKey !== false : $('keyRequired').checked,
     unsupported: preset?.unsupported || false,
     custom: id.startsWith('custom:')
   })
@@ -141,6 +186,31 @@ async function saveProvider() {
   // 自定义项保存后要在下拉里保留，避免再次选中时又变回空白
   await rebuildProviderSelect(id)
   showStatus('ok', '已保存。回到页面刷新后生效。')
+}
+
+async function deleteProvider() {
+  const id = currentId
+  if (String(id).indexOf('custom:') !== 0) return showStatus('err', '内置预设供应商不可删除。')
+
+  const store = await getStore()
+  if (!store.providers[id]) return showStatus('err', '该供应商尚未保存，无需删除。')
+  const name = store.providers[id].name || id
+
+  if (!confirm(`确定删除自定义供应商「${name}」？\n其保存的 API Key 与模型配置将一并移除，此操作不可撤销。`)) {
+    return
+  }
+
+  delete store.providers[id]
+
+  // 删掉的正好是当前选中项时，回落到首个内置预设，避免 prefs 指向不存在的条目
+  if (store.prefs.lastProviderId === id) {
+    store.prefs.lastProviderId = PROVIDER_PRESETS[0].id
+    store.prefs.lastModelId = ''
+  }
+
+  await chrome.storage.local.set({ providers: store.providers, prefs: store.prefs })
+  await rebuildProviderSelect(store.prefs.lastProviderId)
+  showStatus('ok', `已删除自定义供应商「${name}」。`)
 }
 
 async function grantPermission() {
@@ -162,16 +232,21 @@ async function testConnection() {
     const granted = await chrome.permissions.contains({ origins: [pattern] })
     if (!granted) return showStatus('err', `请先点击「授权跨域」授予 ${pattern} 权限。`)
   }
-  if (!apiKey && !/^http:\/\/(127\.0\.0\.1|localhost)/i.test(baseUrl)) {
+  // 是否需要 Key 以开关为准（默认值由地址自动推断），不再按地址正则硬拦：
+  // 本地 / 内网网关（如 codebuddy http://127.0.0.1:8787/v1）本就无需鉴权
+  if ($('keyRequired').checked && !apiKey) {
     return showStatus('err', '请先填写 API Key。')
   }
 
   showStatus('info', '正在测试…')
   try {
+    // OpenCode（Go / Zen）网关要求带 x-opencode-session，否则返回 MissingSessionID
+    const sessionId = await getOpencodeSessionId()
     const res = await fetch(baseUrl + '/chat/completions', {
       method: 'POST',
       headers: Object.assign(
         { 'Content-Type': 'application/json' },
+        opencodeSessionHeader(baseUrl, sessionId) || {},
         apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
       ),
       body: JSON.stringify({
@@ -185,9 +260,7 @@ async function testConnection() {
       showStatus('ok', `连接成功（HTTP ${res.status}）。模型「${model}」可用。`)
     } else {
       const text = await res.text().catch(() => '')
-      let msg = `HTTP ${res.status}`
-      try { msg = JSON.parse(text).error.message || msg } catch (e) { /* 保留状态码 */ }
-      showStatus('err', `连接失败：${msg}`)
+      showStatus('err', `连接失败：${providerErrorMessage(text, `HTTP ${res.status}`)}`)
     }
   } catch (e) {
     showStatus('err', `连接失败：${e && e.message ? e.message : e}`)
@@ -205,10 +278,13 @@ async function fetchModels() {
 
   showStatus('info', '正在获取模型列表…')
   try {
+    const sessionId = await getOpencodeSessionId()
+    const auth = $('apiKey').value.trim()
     const res = await fetch(baseUrl + '/models', {
-      headers: $('apiKey').value.trim()
-        ? { Authorization: `Bearer ${$('apiKey').value.trim()}` }
-        : {}
+      headers: Object.assign(
+        opencodeSessionHeader(baseUrl, sessionId) || {},
+        auth ? { Authorization: `Bearer ${auth}` } : {}
+      )
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const json = await res.json()
@@ -361,6 +437,16 @@ async function init() {
     if ($('modelPreset').value) $('model').value = $('modelPreset').value
   })
   $('baseUrl').addEventListener('change', refreshPermTag)
+  // 改地址时按新地址重新推断；用户手动拨过开关则以用户为准
+  $('baseUrl').addEventListener('input', () => {
+    if (keyRequiredTouched) return
+    $('keyRequired').checked = inferRequiresKey($('baseUrl').value)
+    syncKeyField()
+  })
+  $('keyRequired').addEventListener('change', () => {
+    keyRequiredTouched = true
+    syncKeyField()
+  })
   $('toggleKey').addEventListener('click', () => {
     const el = $('apiKey')
     const toText = el.type === 'password'
@@ -369,6 +455,7 @@ async function init() {
   })
 
   $('save').addEventListener('click', saveProvider)
+  $('deleteProvider').addEventListener('click', deleteProvider)
   $('grant').addEventListener('click', grantPermission)
   $('test').addEventListener('click', testConnection)
   $('fetchModels').addEventListener('click', fetchModels)

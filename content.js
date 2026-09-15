@@ -51,7 +51,13 @@
     var out = {
       type: 'pong',
       id: id,
-      payload: { version: '', configured: false, providerName: '', model: '', models: [] }
+      // ⚠ 安全边界：只回传地址与「是否需要 Key」这两个非敏感字段，
+    //   apiKey 永不回传页面（见 background.js 顶部说明第 3 条）
+    payload: {
+      version: '', configured: false, providerName: '',
+      baseUrl: '', requiresKey: true,
+      model: '', models: []
+    }
     }
     try {
       out.payload.version = chrome.runtime.getManifest().version
@@ -74,6 +80,8 @@
           out.payload.providerName = p.name || prefs.lastProviderId
           out.payload.model = prefs.lastModelId || p.defaultModel || ''
           out.payload.models = p.models || []
+          out.payload.requiresKey = p.requiresKey !== false
+          out.payload.baseUrl = p.baseUrl || ''
           out.payload.configured = p.requiresKey === false ? true : !!p.apiKey
         }
       })

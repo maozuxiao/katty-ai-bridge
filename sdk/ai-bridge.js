@@ -88,7 +88,8 @@
   /**
    * 探测可用通道。结果会缓存，扩展安装/卸载后需调用 resetProbe() 再探。
    * @returns {Promise<{available:boolean, mode:string, configured?:boolean,
-   *                    providerName?:string, model?:string, version?:string}>}
+   *                    providerName?:string, baseUrl?:string, requiresKey?:boolean,
+   *                    model?:string, version?:string}>}
    */
   function probe() {
     if (_probePromise) return _probePromise
@@ -114,9 +115,13 @@
         var d = e.data
         if (!d || d.source !== MSG_FROM_EXT || d.id !== id || d.type !== 'pong') return
         var pl = d.payload || {}
+        // baseUrl / requiresKey 由扩展 1.0.2 起回传；旧版扩展没有这两个字段，
+        // 兜底成空串与 true，页面行为与升级前完全一致。apiKey 按设计永不回传。
         finish('extension', {
           configured: !!pl.configured,
           providerName: pl.providerName || '',
+          baseUrl: pl.baseUrl || '',
+          requiresKey: pl.requiresKey !== false,
           model: pl.model || '',
           models: pl.models || [],
           version: pl.version || ''

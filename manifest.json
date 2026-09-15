@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Katty AI Bridge",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "为本地静态网页提供统一的 AI 请求通道：绕过浏览器 CORS 限制，并在扩展内安全保管 API Key。",
   "minimum_chrome_version": "109",
   "permissions": ["storage"],

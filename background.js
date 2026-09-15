@@ -14,6 +14,9 @@ import {
   DEFAULT_ALLOWLIST,
   originPatternFor,
   opencodeSessionHeader,
+  getOpencodeSessionId,
+  newOpencodeSessionId,
+  providerErrorMessage,
   matchOrigin
 } from './shared/providers.js'
 import { readSseStream } from './shared/sse.js'
@@ -38,7 +41,8 @@ async function getStore() {
     allowlist: got.allowlist || DEFAULT_ALLOWLIST.slice(),
     pendingOrigins: got.pendingOrigins || [],
     stats: Object.assign({}, DEFAULT_STATS, got.stats || {}),
-    opencodeSessionId: got.opencodeSessionId || ''
+    // OpenCode Go 缺此头会被网关拒绝，这里保证永不为空（缺失时惰性生成并持久化）
+    opencodeSessionId: got.opencodeSessionId || (await getOpencodeSessionId())
   }
 }
 
@@ -105,6 +109,8 @@ async function handleChat(port, msg) {
       })
       return
     }
+    // requiresKey 由选项页写入：内置预设取 PROVIDER_PRESETS，自定义端点先按地址
+    // 自动推断（本地/内网网关免 Key）再允许手动覆盖。空 Key 只有在确实需要时才算错误。
     if (provider.requiresKey !== false && !provider.apiKey) {
       post({ type: 'error', code: 'NO_KEY', message: `供应商「${provider.name}」未填写 API Key。` })
       return
@@ -170,12 +176,7 @@ async function handleChat(port, msg) {
 
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => '')
-      let message = `HTTP ${res.status}`
-      try {
-        message = JSON.parse(text).error.message || message
-      } catch (e) {
-        /* 非 JSON 响应，保留状态码文案 */
-      }
+      const message = providerErrorMessage(text, `HTTP ${res.status}`)
       clearTimeout(timer)
       controllers.delete(id)
       post({ type: 'error', code: 'HTTP', message })
@@ -223,9 +224,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   const got = await chrome.storage.local.get(['opencodeSessionId', 'allowlist'])
   const patch = {}
   if (!got.opencodeSessionId) {
-    patch.opencodeSessionId =
-      (crypto.randomUUID && crypto.randomUUID()) ||
-      String(Date.now()) + Math.random().toString(36).slice(2)
+    patch.opencodeSessionId = newOpencodeSessionId()
   }
   if (!got.allowlist) patch.allowlist = DEFAULT_ALLOWLIST.slice()
   if (Object.keys(patch).length) await chrome.storage.local.set(patch)

@@ -50,6 +50,10 @@
           <button class="btn ghost" id="toggleKey" style="flex:0 0 auto" type="button">显示</button>
         </div>
         <div class="hint">Key 仅保存在本机扩展存储中，永不回传给调用它的网页。</div>
+        <label class="check" for="keyRequired">
+          <input type="checkbox" id="keyRequired" checked>
+          <span>此端点需要 API Key（本地 / 内网网关通常不需要，会自动取消勾选）</span>
+        </label>
       </div>
 
       <div class="field">
@@ -65,6 +69,7 @@
         <button class="btn primary" id="save" type="button">保存配置</button>
         <button class="btn" id="grant" type="button">授权跨域</button>
         <button class="btn" id="test" type="button">测试连接</button>
+        <button class="btn ghost danger" id="deleteProvider" type="button" hidden>删除此供应商</button>
         <span id="providerStatus"></span>
       </div>
 

@@ -10,7 +10,7 @@
  *   失败时把 CORS 错误原样上报，由用户自行判断。这样即使本表的判断过时也不会误导。
  */
 
-export const BRIDGE_VERSION = '1.0.0'
+export const BRIDGE_VERSION = '1.0.1'
 
 /** postMessage 协议标识。页面与扩展双向都必须带 source，用于过滤页面上其它脚本的消息。 */
 export const MSG_FROM_PAGE = 'katty-ai-bridge/page'
@@ -165,13 +165,92 @@ export function originPatternFor(baseUrl) {
 }
 
 /**
+ * 推断某个端点是否需要 API Key。
+ *
+ * 本地 / 内网网关（codebuddy、Ollama、LM Studio 一类）普遍不做鉴权，
+ * 既无从填 Key，带上也可能被拒绝，因此这类地址默认免 Key。
+ * 公网地址保守返回 true，用户可在选项页用开关手动覆盖。
+ *
+ * ⚠ 判定规则只此一份：选项页的开关默认值、测试连接、选项页保存、
+ *   content.js 的 pong 都走它，避免各处各写一份正则。
+ *
+ * @param {string} baseUrl
+ * @returns {boolean} true = 需要 API Key
+ */
+export function inferRequiresKey(baseUrl) {
+  try {
+    // hostname 对 IPv6 会带方括号，如 [::1]
+    const host = new URL(baseUrl).hostname.replace(/^\[|\]$/g, '').toLowerCase()
+    if (!host) return true
+    if (host === 'localhost' || host === '::1' || host === '0.0.0.0') return false
+    if (/\.local$/.test(host)) return false
+    if (/^127\./.test(host)) return false
+    if (/^10\./.test(host)) return false
+    if (/^192\.168\./.test(host)) return false
+    // 172.16.0.0 – 172.31.255.255
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return false
+    return true
+  } catch (e) {
+    return true
+  }
+}
+
+/**
  * OpenCode（Go / Zen）要求每会话带稳定的 x-opencode-session 头。
  * 移植自 mc-tool chatService.ts 的 opencodeSessionHeaders。
+ *
+ * ⚠ 自 2026-09-06 起 OpenCode Go 网关会拒绝缺头的请求：
+ *   {"error":{"type":"MissingSessionID","message":"Error from provider (Console Go): ..."}}
+ *   因此所有发往 opencode.ai 的请求（对话 / 测试连接 / 拉模型列表）都必须经过本函数。
  */
 export function opencodeSessionHeader(baseUrl, sessionId) {
   if (!baseUrl || !sessionId) return null
   if (!/opencode\.ai/i.test(baseUrl)) return null
   return { 'x-opencode-session': sessionId }
+}
+
+export function newOpencodeSessionId() {
+  const c = globalThis.crypto
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  return 'oc-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10)
+}
+
+/**
+ * 读取（必要时生成并持久化）稳定的会话 ID。
+ *
+ * 不能只依赖 chrome.runtime.onInstalled 初始化：未打包扩展「重新加载」时该事件不保证触发，
+ * 一旦 ID 为空，opencodeSessionHeader 就会返回 null，请求又被网关拒绝。
+ * 这里做成惰性兜底，首次用到即自愈。
+ */
+export async function getOpencodeSessionId() {
+  const got = await chrome.storage.local.get(['opencodeSessionId'])
+  if (got.opencodeSessionId) return got.opencodeSessionId
+  const id = newOpencodeSessionId()
+  await chrome.storage.local.set({ opencodeSessionId: id })
+  return id
+}
+
+/**
+ * 从上游错误响应体里提取可读原因。
+ * 两种常见形态都要覆盖：
+ *   OpenAI 风格  {"error":{"message":"..."}}
+ *   OpenCode 风格 {"type":"MissingSessionID","message":"..."}
+ * 后者原来只能显示成 "HTTP 400"，真实原因被吞掉。
+ */
+export function providerErrorMessage(text, fallback) {
+  if (text) {
+    try {
+      const json = JSON.parse(text)
+      const err = json && json.error
+      const msg =
+        (err && (typeof err === 'string' ? err : err.message)) ||
+        (json && typeof json.message === 'string' ? json.message : '')
+      if (msg) return msg
+    } catch (e) {
+      /* 非 JSON 响应，保留 fallback */
+    }
+  }
+  return fallback
 }
 
 /**
