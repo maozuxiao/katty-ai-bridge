@@ -24,7 +24,16 @@ import {
 } from './shared/providers.js'
 import { readSseStream } from './shared/sse.js'
 
-const TIMEOUT_MS = 60000
+/**
+ * 空闲超时：连续这么久**没收到任何数据**才判定超时。
+ *
+ * 不能按总耗时掐断：推理模型（hy4-preview 等）会先吐一大段 reasoning_content，
+ * 实测一个很简单的润色请求就要 40 秒，真实编辑场景轻松超过一分钟。
+ * 只要流还在出数据（正文或推理片段都算），这里就不断续期。
+ */
+const IDLE_TIMEOUT_MS = 60000
+/** 绝对上限：防止上游挂着不结束，把连接永久占住 */
+const HARD_TIMEOUT_MS = 10 * 60 * 1000
 const PORT_NAME = 'katty-ai-bridge'
 
 /** requestId -> AbortController */
@@ -150,10 +159,23 @@ async function handleChat(port, msg) {
     const controller = new AbortController()
     controllers.set(id, controller)
     let timedOut = false
-    const timer = setTimeout(() => {
+
+    // 空闲续期式超时：每收到一个数据块就重新计时（见 IDLE_TIMEOUT_MS 的说明）
+    let timer = setTimeout(onTimeout, IDLE_TIMEOUT_MS)
+    const hardTimer = setTimeout(onTimeout, HARD_TIMEOUT_MS)
+
+    function onTimeout() {
       timedOut = true
       controller.abort()
-    }, TIMEOUT_MS)
+    }
+    function bumpIdle() {
+      clearTimeout(timer)
+      timer = setTimeout(onTimeout, IDLE_TIMEOUT_MS)
+    }
+    function stopTimers() {
+      clearTimeout(timer)
+      clearTimeout(hardTimer)
+    }
 
     let res
     try {
@@ -164,13 +186,13 @@ async function handleChat(port, msg) {
         body: JSON.stringify({ model, stream: true, messages })
       })
     } catch (e) {
-      clearTimeout(timer)
+      stopTimers()
       controllers.delete(id)
       if (controller.signal.aborted) {
         post({
           type: 'error',
           code: timedOut ? 'TIMEOUT' : 'ABORTED',
-          message: timedOut ? '请求超时（60 秒）。' : '已取消。'
+          message: timedOut ? '请求超时（60 秒未收到任何数据）。' : '已取消。'
         })
       } else {
         post({ type: 'error', code: 'NETWORK', message: `网络请求失败：${e && e.message ? e.message : e}` })
@@ -181,20 +203,30 @@ async function handleChat(port, msg) {
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => '')
       const message = providerErrorMessage(text, `HTTP ${res.status}`)
-      clearTimeout(timer)
+      stopTimers()
       controllers.delete(id)
       post({ type: 'error', code: 'HTTP', message })
       return
     }
 
     try {
-      const result = await readSseStream(res, (chunk) => post({ type: 'delta', text: chunk }))
+      const result = await readSseStream(
+        res,
+        (chunk) => {
+          bumpIdle()
+          post({ type: 'delta', text: chunk })
+        },
+        (chunk) => {
+          bumpIdle()
+          if (chunk) post({ type: 'reasoning', text: chunk })
+        }
+      )
       post({ type: 'done', text: result.content, usage: result.usage })
       await bumpStats(result.usage)
     } catch (e) {
       post({ type: 'error', code: 'STREAM', message: `流式读取失败：${e && e.message ? e.message : e}` })
     } finally {
-      clearTimeout(timer)
+      stopTimers()
       controllers.delete(id)
     }
   } catch (e) {

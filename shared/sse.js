@@ -11,10 +11,14 @@
 /**
  * 读取 OpenAI 兼容接口的 SSE 流。
  * @param {Response} res
- * @param {(chunk: string) => void} onDelta 每收到一个文本增量回调一次
+ * @param {(chunk: string) => void} onDelta 每收到一个正文增量回调一次
+ * @param {(chunk: string) => void} [onReasoning] 每收到一个「推理片段」回调一次。
+ *   推理模型（hy4-preview、deepseek-reasoner、o4-mini 等）会先吐一大段
+ *   reasoning_content，这期间 delta.content 一直是空串。调用方需要它来做两件事：
+ *   重置空闲计时器（否则会被误判成超时），以及给用户呈现「思考中」的状态。
  * @returns {Promise<{content: string, usage: object|null}>}
  */
-export async function readSseStream(res, onDelta) {
+export async function readSseStream(res, onDelta, onReasoning) {
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
@@ -51,6 +55,8 @@ export async function readSseStream(res, onDelta) {
         content += delta.content
         if (onDelta) onDelta(delta.content)
       }
+      // 推理内容与正文分开放：它不能进答案，但必须让调用方知道流还在动
+      if (delta.reasoning_content && onReasoning) onReasoning(delta.reasoning_content)
       if (json.usage) usage = json.usage
     }
   }

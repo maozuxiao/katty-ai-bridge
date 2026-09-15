@@ -118,6 +118,9 @@
       if (!msg || msg.id !== id) return
       if (msg.type === 'delta') {
         sendToPage({ type: 'delta', id: id, payload: { text: msg.text } })
+      } else if (msg.type === 'reasoning') {
+        // 推理片段，仅供页面显示「思考中」状态，不进答案
+        sendToPage({ type: 'reasoning', id: id, payload: { text: msg.text } })
       } else if (msg.type === 'done') {
         cleanup(id)
         sendToPage({ type: 'done', id: id, payload: { text: msg.text, usage: msg.usage } })

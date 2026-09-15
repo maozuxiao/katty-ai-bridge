@@ -25,6 +25,10 @@
   var MSG_FROM_EXT = 'katty-ai-bridge/ext'
   var PING_TIMEOUT = 400
   var DIRECT_STORAGE_KEY = 'katty-ai-direct'
+  /**
+   * 空闲超时：连续这么久没收到任何消息（正文 delta 或推理片段都算）才判定超时。
+   * 推理模型会先思考几十秒才吐第一个正文 token，按总耗时掐断会让这类模型完全不可用。
+   */
   var REQUEST_TIMEOUT = 60000
 
   var _mode = null        // 'extension' | 'direct' | 'none'，null = 尚未探测
@@ -155,6 +159,16 @@
       // 扩展发来的 delta.text 是「增量片段」而非累积文本，
       // 这里自己累积，才能给 onDelta 提供与直连通道语义一致的 (chunk, full)。
       var acc = ''
+      var reasonAcc = ''
+      var timeout = null
+
+      // 空闲续期式超时：每收到一条消息就重新计时，只有长时间毫无进展才算超时
+      function armTimeout() {
+        global.clearTimeout(timeout)
+        timeout = global.setTimeout(function () {
+          finish(makeError('TIMEOUT', '扩展无响应（60 秒无任何数据）。'), null)
+        }, REQUEST_TIMEOUT)
+      }
 
       function finish(err, text) {
         if (settled) return
@@ -177,9 +191,16 @@
         if (!d || d.source !== MSG_FROM_EXT || d.id !== id) return
         var pl = d.payload || {}
         if (d.type === 'delta') {
+          armTimeout()
           var piece = pl.text || ''
           acc += piece
           if (opts.onDelta) opts.onDelta(piece, acc)
+        } else if (d.type === 'reasoning') {
+          // 推理片段：续期计时器，让调用方知道还在动；不进答案
+          armTimeout()
+          var rp = pl.text || ''
+          reasonAcc += rp
+          if (opts.onReasoning) opts.onReasoning(rp, reasonAcc)
         } else if (d.type === 'done') {
           // done 的 text 是完整内容；万一扩展侧缺失则回落到本地累积值
           finish(null, pl.text != null && pl.text !== '' ? pl.text : acc)
@@ -196,9 +217,7 @@
       }
 
       // 兜底超时：扩展崩溃或被禁用时不会回任何消息，避免界面永久卡在「生成中」
-      var timeout = global.setTimeout(function () {
-        finish(makeError('TIMEOUT', '扩展无响应（60 秒）。'), null)
-      }, REQUEST_TIMEOUT)
+      armTimeout()
 
       global.postMessage({
         source: MSG_FROM_PAGE,
@@ -291,6 +310,8 @@
    * @param {string} [opts.providerId]
    * @param {AbortSignal} [opts.signal]
    * @param {(chunk:string, full:string) => void} [opts.onDelta]
+   * @param {(chunk:string, full:string) => void} [opts.onReasoning] 推理模型的「思考过程」片段，
+   *   不进最终答案，仅用于呈现进度（仅扩展通道支持，直连通道不回调）
    * @returns {Promise<string>} 完整回复文本
    */
   function chat(opts) {
